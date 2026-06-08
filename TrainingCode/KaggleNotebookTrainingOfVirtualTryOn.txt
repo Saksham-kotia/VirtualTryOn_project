@@ -1,0 +1,486 @@
+import os
+
+os.makedirs("/kaggle/working/data/raw/UTKFace", exist_ok=True)
+os.makedirs("/kaggle/working/models", exist_ok=True)
+os.makedirs("/kaggle/working/training_pipeline", exist_ok=True)
+
+print("Folders created!")
+
+---------------------------------------------------------------------------------------------------------------------
+
+import shutil
+import os
+
+src_path = "/kaggle/input/all-the-files"
+dst_path = "/kaggle/working/training_pipeline"
+
+files_to_copy = [
+    "annotation_tool.py",
+    "annotation_tool_buttons.py",
+    "annotation_tool_buttons_resume.py",
+    "annotation_tool_collab.py",
+    "cnn_trainer.py",
+    "geometric_labeler.py",
+    "run_option2_pipeline.py"
+]
+
+for filename in files_to_copy:
+    shutil.copy(os.path.join(src_path, filename), 
+                os.path.join(dst_path, filename))
+
+print("All files copied successfully!")
+
+
+---------------------------------------------------------------------------------------------------------------------
+
+import os, shutil
+from tqdm.notebook import tqdm
+
+src = "/kaggle/input/utkface-manual/UTKFace"
+dst = "/kaggle/working/data/raw/UTKFace"
+
+os.makedirs(dst, exist_ok=True)
+
+files = os.listdir(src)
+for f in tqdm(files):
+    shutil.copy(os.path.join(src, f), os.path.join(dst, f))
+
+print("✔ Copied all UTKFace images into working directory!")
+
+
+---------------------------------------------------------------------------------------------------------------------
+
+%%bash
+cat > /kaggle/working/training_pipeline/annotation_tool_kaggle.py << 'EOF'
+# (content will be inserted later)
+EOF
+
+
+---------------------------------------------------------------------------------------------------------------------
+
+%%bash
+cat > /kaggle/working/training_pipeline/annotation_tool_kaggle.py << 'EOF'
+"""
+annotation_tool_kaggle.py (FIXED)
+Kaggle-compatible inline annotation tool using ipywidgets.
+Buttons: round, oval, square, heart, oblong
+"""
+
+from IPython.display import display, clear_output
+from PIL import Image
+import ipywidgets as widgets
+import os, csv, traceback
+
+IMAGES_DIR = "/kaggle/working/data/raw/UTKFace"
+OUTPUT_CSV = "/kaggle/working/data/raw/labels_manual.csv"
+IMG_DISPLAY_SIZE = (640, 640)
+LABELS = ["round","oval","square","heart","oblong"]
+
+os.makedirs(os.path.dirname(OUTPUT_CSV), exist_ok=True)
+
+def list_images(path):
+    exts = (".jpg",".jpeg",".png",".bmp",".webp")
+    return sorted([f for f in os.listdir(path) if f.lower().endswith(exts)])
+
+def load_labels(csv_path):
+    labels = {}
+    if os.path.exists(csv_path):
+        try:
+            with open(csv_path, newline='', encoding='utf-8') as f:
+                r = csv.reader(f)
+                _ = next(r, None)
+                for row in r:
+                    if len(row) >= 2:
+                        labels[row[0]] = row[1]
+        except:
+            traceback.print_exc()
+    return labels
+
+def save_labels(csv_path, data_dict):
+    tmp = csv_path + ".tmp"
+    with open(tmp, "w", newline='', encoding='utf-8') as f:
+        w = csv.writer(f)
+        w.writerow(["filename","label"])
+        for k,v in data_dict.items():
+            w.writerow([k,v])
+    os.replace(tmp, csv_path)
+
+images = list_images(IMAGES_DIR)
+labels_map = load_labels(OUTPUT_CSV)
+
+if len(images) == 0:
+    raise SystemExit("❌ No images found in UTKFace folder.")
+
+idx = 0
+for i,f in enumerate(images):
+    if f not in labels_map:
+        idx = i
+        break
+
+out = widgets.Output()
+btns = {
+    "round": widgets.Button(description="Round", button_style='primary'),
+    "oval": widgets.Button(description="Oval", button_style='info'),
+    "square": widgets.Button(description="Square", button_style=''),
+    "heart": widgets.Button(description="Heart", button_style='danger'),
+    "oblong": widgets.Button(description="Oblong", button_style='warning'),
+}
+btn_prev = widgets.Button(description="◀ Prev")
+btn_next = widgets.Button(description="Next ▶")
+btn_save = widgets.Button(description="Save CSV", button_style='success')
+
+idx_box = widgets.BoundedIntText(value=idx, min=0, max=len(images)-1, description="Index")
+fname_label = widgets.Label()
+progress_label = widgets.Label()
+current_label = widgets.Label()
+
+def show_image(i):
+    out.clear_output()
+    with out:
+        fn = images[i]
+        path = os.path.join(IMAGES_DIR, fn)
+        try:
+            img = Image.open(path).convert("RGB")
+            img.thumbnail(IMG_DISPLAY_SIZE, Image.Resampling.LANCZOS)
+            display(img)
+        except Exception as e:
+            print("❌ Error loading:", fn, "->", e)
+    idx_box.value = i
+    fname_label.value = f"{i}/{len(images)-1} — {images[i]}"
+    progress_label.value = f"Labeled: {len(labels_map)} / {len(images)}"
+    current_label.value = labels_map.get(images[i], "UNLABELED")
+
+def apply_label(label):
+    global idx
+    labels_map[images[idx]] = label
+    current_label.value = label
+    next_i = idx + 1
+    while next_i < len(images) and images[next_i] in labels_map:
+        next_i += 1
+    if next_i >= len(images):
+        next_i = 0
+    idx = next_i
+    show_image(idx)
+
+for lbl,btn in btns.items():
+    btn.on_click(lambda b, l=lbl: apply_label(l))
+
+def prev_img(b):
+    global idx
+    idx = max(0, idx-1)
+    show_image(idx)
+
+def next_img(b):
+    global idx
+    idx = min(len(images)-1, idx+1)
+    show_image(idx)
+
+def save_csv(b):
+    save_labels(OUTPUT_CSV, labels_map)
+    current_label.value = "SAVED ✔"
+
+btn_prev.on_click(prev_img)
+btn_next.on_click(next_img)
+btn_save.on_click(save_csv)
+
+display(widgets.HTML("<h3>Annotation Tool (Kaggle Version)</h3>"))
+display(fname_label)
+display(progress_label)
+display(current_label)
+display(widgets.HBox(list(btns.values())))
+display(widgets.HBox([btn_prev, btn_next, btn_save, idx_box]))
+display(out)
+
+show_image(idx)
+EOF
+
+
+---------------------------------------------------------------------------------------------------------------------
+
+%run /kaggle/working/training_pipeline/annotation_tool_kaggle.py
+
+---------------------------------------------------------------------------------------------------------------------
+
+!pip install --upgrade protobuf==3.20.3
+
+---------------------------------------------------------------------------------------------------------------------
+
+# === Small model training: EfficientNetB0 on manual labels ===
+
+import tensorflow as tf, pandas as pd, numpy as np, os
+from tensorflow.keras import layers, Model
+from tensorflow.keras.applications import EfficientNetB0
+from sklearn.model_selection import train_test_split
+
+DATA_DIR = "/kaggle/working/data/raw/UTKFace"
+LABELS_CSV = "/kaggle/working/data/raw/labels_manual.csv"
+SAVE_MODEL = "/kaggle/working/models/small_effnet_b0.h5"
+
+IMG_SIZE = (224,224)
+BATCH = 32
+EPOCHS = 12  # quick training for small model
+
+# Make sure model folder exists
+os.makedirs("/kaggle/working/models", exist_ok=True)
+
+# Load manual labels
+df = pd.read_csv(LABELS_CSV)
+print("Loaded manual labels:", len(df))
+
+# Build file paths
+df['filepath'] = df['filename'].apply(lambda f: os.path.join(DATA_DIR, f))
+
+# Label mapping
+label_names = ['round','oval','square','heart','oblong']
+label_to_idx = {l:i for i,l in enumerate(label_names)}
+df['label_idx'] = df['label'].map(label_to_idx)
+
+# Drop any missing
+df = df.dropna().reset_index(drop=True)
+
+filepaths = df['filepath'].values
+labels = df['label_idx'].values.astype(np.int32)
+
+# TF dataset
+def parse_fn(path, label):
+    image = tf.io.read_file(path)
+    image = tf.image.decode_jpeg(image, channels=3)
+    image = tf.image.convert_image_dtype(image, tf.float32)
+    image = tf.image.resize(image, IMG_SIZE)
+    return image, label
+
+ds = tf.data.Dataset.from_tensor_slices((filepaths, labels)).shuffle(len(filepaths), seed=42)
+train_count = int(0.8 * len(filepaths))
+
+train_ds = ds.take(train_count).map(parse_fn).batch(BATCH).prefetch(tf.data.AUTOTUNE)
+val_ds   = ds.skip(train_count).map(parse_fn).batch(BATCH).prefetch(tf.data.AUTOTUNE)
+
+# Small EfficientNetB0
+base = EfficientNetB0(include_top=False, input_shape=IMG_SIZE+(3,), pooling='avg')
+base.trainable = False
+
+inp = layers.Input(shape=IMG_SIZE+(3,))
+x = tf.keras.applications.efficientnet.preprocess_input(inp)
+x = base(x, training=False)
+x = layers.Dense(128, activation='relu')(x)
+x = layers.Dropout(0.4)(x)
+out = layers.Dense(len(label_names), activation='softmax')(x)
+
+model = Model(inp, out)
+model.compile(
+    optimizer=tf.keras.optimizers.Adam(1e-3),
+    loss="sparse_categorical_crossentropy",
+    metrics=["accuracy"]
+)
+
+print(model.summary())
+
+# Callbacks
+callbacks = [
+    tf.keras.callbacks.ModelCheckpoint(SAVE_MODEL, monitor="val_accuracy", save_best_only=True, verbose=1),
+    tf.keras.callbacks.EarlyStopping(monitor="val_accuracy", patience=5, restore_best_weights=True)
+]
+
+history = model.fit(
+    train_ds,
+    validation_data=val_ds,
+    epochs=EPOCHS,
+    callbacks=callbacks
+)
+
+print("Small model saved to:", SAVE_MODEL)
+
+
+---------------------------------------------------------------------------------------------------------------------
+# === Auto-label all 23k images using the small model ===
+
+import tensorflow as tf, numpy as np, pandas as pd, os, tqdm
+MODEL = "/kaggle/working/models/small_effnet_b0.h5"
+IMG_DIR = "/kaggle/working/data/raw/UTKFace"
+OUT_CSV = "/kaggle/working/data/raw/labels_auto.csv"
+IMG_SIZE = (224,224)
+label_names = ['round','oval','square','heart','oblong']
+
+assert os.path.exists(MODEL), "Small model not found. Run training step first!"
+
+model = tf.keras.models.load_model(MODEL)
+
+files = sorted([f for f in os.listdir(IMG_DIR) if f.lower().endswith(('.jpg','.jpeg','.png'))])
+
+rows = []
+for f in tqdm.tqdm(files, desc="Auto-labeling"):
+    path = os.path.join(IMG_DIR, f)
+    try:
+        img = tf.io.read_file(path)
+        img = tf.image.decode_jpeg(img, channels=3)
+        img = tf.image.resize(img, IMG_SIZE)
+        img = tf.expand_dims(img, 0) / 255.0
+
+        preds = model.predict(img, verbose=0)[0]
+        idx = int(np.argmax(preds))
+        conf = float(preds[idx])
+
+        rows.append((f, label_names[idx], conf))
+    except Exception as e:
+        rows.append((f, "error", 0.0))
+
+df_auto = pd.DataFrame(rows, columns=["filename","label","confidence"])
+df_auto.to_csv(OUT_CSV, index=False)
+
+print("🔥 Auto-labeling complete!")
+print("Saved to:", OUT_CSV)
+print("Total auto-labeled:", len(df_auto))
+
+
+---------------------------------------------------------------------------------------------------------------------
+
+# === Merge manual + auto labels ===
+
+import pandas as pd, os
+
+MANUAL = "/kaggle/working/data/raw/labels_manual.csv"
+AUTO = "/kaggle/working/data/raw/labels_auto.csv"
+OUT = "/kaggle/working/data/raw/labels_merged.csv"
+
+# Choose a confidence threshold
+# 0.0 = keep all auto-labels
+# 0.4–0.5 = keep only confident auto labels (recommended)
+CONF_THRESH = 0.20
+
+df_manual = pd.read_csv(MANUAL)
+df_auto = pd.read_csv(AUTO)
+
+# Filter auto-labels by confidence
+df_auto_filtered = df_auto[df_auto['confidence'] >= CONF_THRESH].copy()
+
+# Build dictionaries
+manual_map = dict(zip(df_manual['filename'], df_manual['label']))
+auto_map   = dict(zip(df_auto_filtered['filename'], df_auto_filtered['label']))
+
+# Merge: manual overrides auto
+merged = []
+all_files = sorted(set(list(auto_map.keys()) + list(manual_map.keys())))
+
+for f in all_files:
+    if f in manual_map:
+        merged.append((f, manual_map[f]))   # priority
+    else:
+        merged.append((f, auto_map[f]))
+
+df_merged = pd.DataFrame(merged, columns=['filename','label'])
+df_merged.to_csv(OUT, index=False)
+
+print("🔥 Merged labels saved to:", OUT)
+print("Total merged:", len(df_merged))
+print("Manual labels:", len(df_manual))
+print("Auto labels kept (filtered):", len(df_auto_filtered))
+
+---------------------------------------------------------------------------------------------------------------------
+
+# === Final EfficientNetB3 Training on merged dataset ===
+
+import tensorflow as tf
+import pandas as pd
+import numpy as np
+import os
+from tensorflow.keras import layers, Model
+from tensorflow.keras.applications import EfficientNetB3
+from sklearn.model_selection import train_test_split
+
+LABELS_CSV = "/kaggle/working/data/raw/labels_merged.csv"
+IMG_DIR = "/kaggle/working/data/raw/UTKFace"
+SAVE_MODEL = "/kaggle/working/models/effnet_b3_final.h5"
+
+IMG_SIZE = (300, 300)   # EfficientNetB3 default resolution
+BATCH = 32
+EPOCHS = 15
+
+os.makedirs("/kaggle/working/models", exist_ok=True)
+
+# Load merged labels
+df = pd.read_csv(LABELS_CSV)
+
+label_names = ['round','oval','square','heart','oblong']
+label_to_idx = {l:i for i,l in enumerate(label_names)}
+df['label_idx'] = df['label'].map(label_to_idx)
+
+df['filepath'] = df['filename'].apply(lambda x: os.path.join(IMG_DIR, x))
+df = df.dropna().reset_index(drop=True)
+
+filepaths = df['filepath'].values
+labels = df['label_idx'].values.astype(np.int32)
+
+# Dataset builder
+def parse_fn(path, label):
+    image = tf.io.read_file(path)
+    image = tf.image.decode_jpeg(image, channels=3)
+    image = tf.image.convert_image_dtype(image, tf.float32)
+    image = tf.image.resize(image, IMG_SIZE)
+    return image, label
+
+ds = tf.data.Dataset.from_tensor_slices((filepaths, labels)).shuffle(len(filepaths), seed=42)
+train_count = int(0.8 * len(filepaths))
+
+train_ds = ds.take(train_count).map(parse_fn).batch(BATCH).prefetch(tf.data.AUTOTUNE)
+val_ds   = ds.skip(train_count).map(parse_fn).batch(BATCH).prefetch(tf.data.AUTOTUNE)
+
+# Build EfficientNetB3 model
+base = EfficientNetB3(include_top=False, input_shape=IMG_SIZE+(3,), pooling='avg')
+base.trainable = False
+
+inp = layers.Input(shape=IMG_SIZE+(3,))
+x = tf.keras.applications.efficientnet.preprocess_input(inp)
+x = base(x, training=False)
+x = layers.Dense(512, activation="relu")(x)
+x = layers.Dropout(0.4)(x)
+out = layers.Dense(len(label_names), activation="softmax")(x)
+
+model = Model(inp, out)
+
+model.compile(
+    optimizer=tf.keras.optimizers.Adam(1e-3),
+    loss="sparse_categorical_crossentropy",
+    metrics=["accuracy"]
+)
+
+# Callbacks
+callbacks = [
+    tf.keras.callbacks.ModelCheckpoint(SAVE_MODEL, monitor="val_accuracy", save_best_only=True, verbose=1),
+    tf.keras.callbacks.ReduceLROnPlateau(monitor="val_loss", factor=0.5, patience=3, min_lr=1e-6),
+    tf.keras.callbacks.EarlyStopping(monitor="val_accuracy", patience=5, restore_best_weights=True)
+]
+
+history = model.fit(
+    train_ds,
+    validation_data=val_ds,
+    epochs=EPOCHS,
+    callbacks=callbacks
+)
+
+print("🔥 Final model saved to:", SAVE_MODEL)
+
+# === Fine Tuning (unfreeze some layers) ===
+
+base.trainable = True
+
+# Freeze first 80% layers, unfreeze last 20%
+for layer in base.layers[:-80]:
+    layer.trainable = False
+
+model.compile(
+    optimizer=tf.keras.optimizers.Adam(1e-5),
+    loss="sparse_categorical_crossentropy",
+    metrics=["accuracy"]
+)
+
+ft_history = model.fit(
+    train_ds,
+    validation_data=val_ds,
+    epochs=6,
+    callbacks=callbacks
+)
+
+print("🔥 Fine-tuned model saved to:", SAVE_MODEL)
+
+
+
